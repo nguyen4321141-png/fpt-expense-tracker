@@ -1,5 +1,7 @@
+'use client';
+
 import React, { useState, useEffect } from 'react';
-import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { PlusCircle, TrendingUp, DollarSign, Calendar, ThumbsUp, ThumbsDown, Trash2 } from 'lucide-react';
 
 const CATEGORIES = [
@@ -10,8 +12,9 @@ const CATEGORIES = [
   { value: 'other', label: 'Khác', color: '#95E1D3' }
 ];
 
-const ExpenseTracker = () => {
+export default function ExpenseTracker() {
   const [expenses, setExpenses] = useState([]);
+  const [mounted, setMounted] = useState(false);
   const [formData, setFormData] = useState({
     title: '',
     amount: '',
@@ -19,31 +22,25 @@ const ExpenseTracker = () => {
     date: new Date().toISOString().split('T')[0]
   });
 
-  // Load data from storage on mount
+  // Handle client-side mounting
   useEffect(() => {
-    const loadData = async () => {
+    setMounted(true);
+    const saved = localStorage.getItem('expenses');
+    if (saved) {
       try {
-        const result = await window.storage.get('expenses', false);
-        if (result) {
-          setExpenses(JSON.parse(result.value));
-        }
-      } catch (error) {
-        // No data exists yet
-        console.log('No existing data');
+        setExpenses(JSON.parse(saved));
+      } catch (e) {
+        console.error('Failed to load expenses:', e);
       }
-    };
-    loadData();
+    }
   }, []);
 
-  // Save data to storage whenever expenses change
-  const saveExpenses = async (newExpenses) => {
-    try {
-      await window.storage.set('expenses', JSON.stringify(newExpenses), false);
-      setExpenses(newExpenses);
-    } catch (error) {
-      console.error('Failed to save:', error);
+  // Save to localStorage
+  useEffect(() => {
+    if (mounted && expenses.length >= 0) {
+      localStorage.setItem('expenses', JSON.stringify(expenses));
     }
-  };
+  }, [expenses, mounted]);
 
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -51,13 +48,15 @@ const ExpenseTracker = () => {
 
     const newExpense = {
       id: Date.now().toString(),
-      ...formData,
+      title: formData.title,
       amount: parseFloat(formData.amount),
+      category: formData.category,
+      date: formData.date,
       votes: { reasonable: 0, unreasonable: 0 },
-      userVotes: {} // Track who voted what
+      userVotes: {}
     };
 
-    saveExpenses([newExpense, ...expenses]);
+    setExpenses([newExpense, ...expenses]);
     setFormData({
       title: '',
       amount: '',
@@ -67,7 +66,11 @@ const ExpenseTracker = () => {
   };
 
   const handleVote = (expenseId, voteType) => {
-    const userId = 'user_' + Math.random().toString(36).substr(2, 9); // Simulate user ID
+    let userId = localStorage.getItem('userId');
+    if (!userId) {
+      userId = 'user_' + Math.random().toString(36).substr(2, 9);
+      localStorage.setItem('userId', userId);
+    }
     
     const updatedExpenses = expenses.map(expense => {
       if (expense.id === expenseId) {
@@ -75,12 +78,10 @@ const ExpenseTracker = () => {
         const newUserVotes = { ...expense.userVotes };
         const newVotes = { ...expense.votes };
 
-        // Remove previous vote if exists
         if (currentVote) {
           newVotes[currentVote]--;
         }
 
-        // Add new vote if different from current
         if (currentVote !== voteType) {
           newVotes[voteType]++;
           newUserVotes[userId] = voteType;
@@ -97,12 +98,21 @@ const ExpenseTracker = () => {
       return expense;
     });
 
-    saveExpenses(updatedExpenses);
+    setExpenses(updatedExpenses);
   };
 
   const deleteExpense = (id) => {
-    saveExpenses(expenses.filter(exp => exp.id !== id));
+    setExpenses(expenses.filter(exp => exp.id !== id));
   };
+
+  // Don't render until mounted (avoid hydration mismatch)
+  if (!mounted) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center">
+        <div className="text-2xl text-gray-600">Đang tải...</div>
+      </div>
+    );
+  }
 
   // Calculate statistics
   const totalSpent = expenses.reduce((sum, exp) => sum + exp.amount, 0);
@@ -115,16 +125,19 @@ const ExpenseTracker = () => {
     color: cat.color
   })).filter(cat => cat.value > 0);
 
-  const monthlyData = expenses.reduce((acc, exp) => {
+  const monthlyData = {};
+  expenses.forEach(exp => {
     const month = exp.date.substring(0, 7);
-    acc[month] = (acc[month] || 0) + exp.amount;
-    return acc;
-  }, {});
+    monthlyData[month] = (monthlyData[month] || 0) + exp.amount;
+  });
 
   const chartMonthlyData = Object.entries(monthlyData)
     .map(([month, amount]) => ({ month, amount }))
     .sort((a, b) => a.month.localeCompare(b.month))
     .slice(-6);
+
+  const uniqueDates = new Set(expenses.map(e => e.date)).size;
+  const avgPerDay = expenses.length > 0 ? Math.round(totalSpent / Math.max(1, uniqueDates)) : 0;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 p-4 md:p-8">
@@ -166,9 +179,7 @@ const ExpenseTracker = () => {
               <div>
                 <p className="text-gray-500 text-sm">Trung bình/ngày</p>
                 <p className="text-3xl font-bold text-orange-600">
-                  {expenses.length > 0 
-                    ? Math.round(totalSpent / Math.max(1, new Set(expenses.map(e => e.date)).size)).toLocaleString('vi-VN')
-                    : 0}đ
+                  {avgPerDay.toLocaleString('vi-VN')}đ
                 </p>
               </div>
               <Calendar className="w-12 h-12 text-orange-400" />
@@ -277,7 +288,7 @@ const ExpenseTracker = () => {
                           <Cell key={`cell-${index}`} fill={entry.color} />
                         ))}
                       </Pie>
-                      <Tooltip formatter={(value) => `${value.toLocaleString('vi-VN')}đ`} />
+                      <Tooltip formatter={(value) => `${Number(value).toLocaleString('vi-VN')}đ`} />
                     </PieChart>
                   </ResponsiveContainer>
                 </div>
@@ -290,7 +301,7 @@ const ExpenseTracker = () => {
                       <CartesianGrid strokeDasharray="3 3" />
                       <XAxis dataKey="month" />
                       <YAxis />
-                      <Tooltip formatter={(value) => `${value.toLocaleString('vi-VN')}đ`} />
+                      <Tooltip formatter={(value) => `${Number(value).toLocaleString('vi-VN')}đ`} />
                       <Bar dataKey="amount" fill="#4F46E5" radius={[8, 8, 0, 0]} />
                     </BarChart>
                   </ResponsiveContainer>
@@ -325,9 +336,9 @@ const ExpenseTracker = () => {
                             <div className="flex items-center gap-2 mt-1">
                               <span
                                 className="text-xs px-2 py-1 rounded-full text-white"
-                                style={{ backgroundColor: category.color }}
+                                style={{ backgroundColor: category?.color }}
                               >
-                                {category.label}
+                                {category?.label}
                               </span>
                               <span className="text-xs text-gray-500">{expense.date}</span>
                             </div>
@@ -339,6 +350,7 @@ const ExpenseTracker = () => {
                             <button
                               onClick={() => deleteExpense(expense.id)}
                               className="text-red-500 hover:text-red-700 mt-1"
+                              aria-label="Xóa khoản chi"
                             >
                               <Trash2 className="w-4 h-4" />
                             </button>
@@ -352,6 +364,7 @@ const ExpenseTracker = () => {
                             <button
                               onClick={() => handleVote(expense.id, 'reasonable')}
                               className="flex-1 flex items-center justify-center gap-1 px-3 py-2 rounded-lg border-2 border-green-500 text-green-600 hover:bg-green-50 transition-colors"
+                              aria-label="Vote hợp lý"
                             >
                               <ThumbsUp className="w-4 h-4" />
                               <span className="font-semibold">{expense.votes.reasonable}</span>
@@ -360,6 +373,7 @@ const ExpenseTracker = () => {
                             <button
                               onClick={() => handleVote(expense.id, 'unreasonable')}
                               className="flex-1 flex items-center justify-center gap-1 px-3 py-2 rounded-lg border-2 border-red-500 text-red-600 hover:bg-red-50 transition-colors"
+                              aria-label="Vote không hợp lý"
                             >
                               <ThumbsDown className="w-4 h-4" />
                               <span className="font-semibold">{expense.votes.unreasonable}</span>
@@ -378,6 +392,4 @@ const ExpenseTracker = () => {
       </div>
     </div>
   );
-};
-
-export default ExpenseTracker;
+}
